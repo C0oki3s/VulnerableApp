@@ -1,0 +1,76 @@
+name: "CodeQL Advanced"
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+  schedule:
+    - cron: '36 6 * * 5'
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    # Runner size impacts CodeQL analysis time. Consider larger runners if needed.
+    runs-on: ${{ (matrix.language == 'swift' && 'macos-latest') || 'ubuntu-latest' }}
+    permissions:
+      # Required for all workflows
+      security-events: write
+      # Required to fetch internal or private CodeQL packs
+      packages: read
+      # Only required for workflows in private repositories
+      actions: read
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: java-kotlin
+            build-mode: none  # For Java (and optionally Kotlin) use 'none' or change to 'autobuild' if needed.
+          - language: javascript-typescript
+            build-mode: none
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Initialize the CodeQL tools.
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          # By specifying both "security-extended" and "security-and-quality",
+          # the analysis now runs a more comprehensive set of queries covering all severities.
+          queries: security-extended,security-and-quality
+
+      # For languages that require manual build commands.
+      - if: matrix.build-mode == 'manual'
+        shell: bash
+        run: |
+          echo 'Manual build mode required. Replace these lines with your build commands (e.g., make bootstrap, make release).'
+          exit 1
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
+
+      # Additional step to parse the SARIF file and fail the workflow if any vulnerability (from low up to critical) is detected.
+      - name: Check CodeQL Vulnerabilities
+        if: always()
+        run: |
+          echo "Checking CodeQL SARIF results for vulnerabilities (low to critical)..."
+          if [ -f codeql-results.sarif ]; then
+            vuln_count=$(jq '[.runs[].results[] | select(.properties.security_severity_level? | ascii_downcase == "low" or ascii_downcase == "medium" or ascii_downcase == "high" or ascii_downcase == "critical")] | length' codeql-results.sarif)
+            echo "Found $vuln_count vulnerabilities with security severity."
+            if [ "$vuln_count" -gt 0 ]; then
+              echo "Vulnerabilities detected. Failing the workflow."
+              exit 1
+            else
+              echo "No vulnerabilities detected."
+            fi
+          else
+            echo "SARIF results file not found."
+          fi
